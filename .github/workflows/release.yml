@@ -1,0 +1,109 @@
+name: Release iStack CLI
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: bun-darwin-arm64
+            artifact: istack-macos-arm64
+          - target: bun-darwin-x64
+            artifact: istack-macos-x64
+          - target: bun-linux-arm64
+            artifact: istack-linux-arm64
+          - target: bun-linux-x64
+            artifact: istack-linux-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Encrypt skills
+        env:
+          ISTACK_BUILD_KEY: ${{ secrets.ISTACK_BUILD_KEY }}
+        run: bun run encrypt-skills
+
+      - name: Build binary (${{ matrix.artifact }})
+        env:
+          # Inject the binary half of the AES key as a compile-time define
+          ISTACK_BK: ${{ secrets.ISTACK_BINARY_KEY_HALF }}
+        run: |
+          bun build --compile \
+            --target=${{ matrix.target }} \
+            --define '__ISTACK_BK__="'"$ISTACK_BK"'"' \
+            src/index.ts \
+            --outfile dist/${{ matrix.artifact }}
+
+      - name: Generate checksum
+        run: |
+          cd dist
+          sha256sum ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}
+            dist/${{ matrix.artifact }}.sha256
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "iStack CLI ${{ github.ref_name }}"
+          body: |
+            ## iStack CLI ${{ github.ref_name }}
+
+            ### Installation
+            ```bash
+            curl -fsSL https://istack.dev/install | bash
+            ```
+
+            ### Manual download
+            | Platform | File |
+            |---|---|
+            | macOS Apple Silicon | `istack-macos-arm64` |
+            | macOS Intel | `istack-macos-x64` |
+            | Linux ARM64 | `istack-linux-arm64` |
+            | Linux x64 | `istack-linux-x64` |
+          files: |
+            dist/istack-macos-arm64
+            dist/istack-macos-arm64.sha256
+            dist/istack-macos-x64
+            dist/istack-macos-x64.sha256
+            dist/istack-linux-arm64
+            dist/istack-linux-arm64.sha256
+            dist/istack-linux-x64
+            dist/istack-linux-x64.sha256
+          draft: false
+          prerelease: false

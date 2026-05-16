@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-types/
+.env
+.env.*
+src/skills/encrypted.ts
+skills-source/
+*.sha256
+.istack/
