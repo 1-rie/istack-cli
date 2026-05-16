@@ -4,6 +4,6 @@ dist-types/
 .env
 .env.*
 src/skills/encrypted.ts
-skills-source/
+# skills-source/ — committed (private repo, IP protected at binary level)
 *.sha256
 .istack/
