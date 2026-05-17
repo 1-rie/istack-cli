@@ -2,6 +2,7 @@ import { createInterface } from 'readline';
 import chalk from 'chalk';
 import { mergeConfig, loadConfig, type Provider } from '../auth/config.js';
 import { validateLicense } from '../auth/license.js';
+import { MODEL_OPTIONS, DEFAULT_MODEL } from '../models.js';
 
 function prompt(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
   return new Promise(resolve => rl.question(question, resolve));
@@ -12,69 +13,82 @@ export async function runLogin() {
 
   console.log('');
   console.log(chalk.cyan.bold('  iStack CLI — Login'));
-  console.log(chalk.dim('  Configure your API key and license\n'));
+  console.log(chalk.dim('  Configure your license and AI provider\n'));
 
   const config = loadConfig();
 
-  // ── Provider selection ──────────────────────────────────────────────────────
-  console.log(chalk.white('  AI Provider:'));
-  console.log(chalk.dim('    1) Anthropic (Claude) — recommended'));
-  console.log(chalk.dim('    2) OpenAI (GPT-4o)'));
-  console.log(chalk.dim('    3) Google Gemini'));
-  const providerChoice = await prompt(rl, chalk.green('  ▶ Choice [1]: '));
-  const provider: Provider = ['anthropic', 'openai', 'gemini'][Number(providerChoice || '1') - 1] as Provider ?? 'anthropic';
-  mergeConfig({ provider });
-
-  // ── API key per provider ────────────────────────────────────────────────────
-  if (provider === 'anthropic') {
-    const existing = config.anthropicKey ? `[${config.anthropicKey.slice(0, 8)}…]` : '';
-    const key = await prompt(rl, chalk.green(`  ▶ Anthropic API key ${existing}: `));
-    if (key.trim()) mergeConfig({ anthropicKey: key.trim() });
-  } else if (provider === 'openai') {
-    const existing = config.openaiKey ? `[${config.openaiKey.slice(0, 8)}…]` : '';
-    const key = await prompt(rl, chalk.green(`  ▶ OpenAI API key ${existing}: `));
-    if (key.trim()) mergeConfig({ openaiKey: key.trim() });
-  } else if (provider === 'gemini') {
-    const existing = config.geminiKey ? `[${config.geminiKey.slice(0, 8)}…]` : '';
-    const key = await prompt(rl, chalk.green(`  ▶ Gemini API key ${existing}: `));
-    if (key.trim()) mergeConfig({ geminiKey: key.trim() });
-  }
-
-  // ── Model selection ─────────────────────────────────────────────────────────
-  const defaultModels: Record<Provider, string> = {
-    anthropic: 'claude-sonnet-4-6',
-    openai: 'gpt-4o',
-    gemini: 'gemini-2.0-flash-exp',
-  };
-  const defaultModel = defaultModels[provider];
-  const model = await prompt(rl, chalk.green(`  ▶ Model [${defaultModel}]: `));
-  mergeConfig({ model: model.trim() || defaultModel });
-
-  // ── License key ─────────────────────────────────────────────────────────────
-  console.log('');
-  const existingLicense = config.licenseKey ? `[${config.licenseKey.slice(0, 12)}…]` : '';
-  const licenseInput = await prompt(rl, chalk.green(`  ▶ iStack license key ${existingLicense}: `));
-  const licenseKey = licenseInput.trim() || config.licenseKey || '';
-
-  if (licenseKey) {
-    process.stdout.write(chalk.dim('  Validating license... '));
-    const result = await validateLicense(licenseKey);
+  // ── 1. iStack license key (required) ───────────────────────────────────────
+  let licenseKey = config.licenseKey ?? '';
+  while (true) {
+    const existingHint = licenseKey ? `[${licenseKey.slice(0, 12)}…] ` : '';
+    const licenseInput = await prompt(rl, chalk.green(`  ▶ iStack license key ${existingHint}: `));
+    const entered = licenseInput.trim();
+    if (!entered && licenseKey) break; // keep existing valid key
+    if (!entered) {
+      console.log(chalk.red('  ✖  A valid iStack license is required. Get one at istack.dev'));
+      continue;
+    }
+    process.stdout.write(chalk.dim('  Validating… '));
+    const result = await validateLicense(entered);
     if (result.valid) {
       console.log(chalk.green('✓'));
       console.log(chalk.dim(`  Plan: ${result.plan ?? 'Pro'}  ·  Expires: ${result.validUntil ?? 'N/A'}`));
+      licenseKey = entered;
+      break;
     } else {
       console.log(chalk.red('✗'));
-      console.log(chalk.red(`  ${result.error}`));
-      console.log(chalk.dim('  Skills will run in dev mode (requires skills-source/ on this machine)'));
+      console.log(chalk.red(`  ✖  ${result.error}`));
     }
-  } else {
-    console.log(chalk.yellow('  No license key — running in dev mode'));
   }
+  console.log('');
+
+  // ── 2. Provider selection ───────────────────────────────────────────────────
+  console.log(chalk.white('  AI Provider:'));
+  console.log(chalk.dim('    1) Anthropic (Claude) — recommended'));
+  console.log(chalk.dim('    2) OpenAI (GPT / o-series)'));
+  console.log(chalk.dim('    3) Google Gemini'));
+  const providerChoice = await prompt(rl, chalk.green('  ▶ Choice [1]: '));
+  const provider: Provider =
+    (['anthropic', 'openai', 'gemini'] as Provider[])[Number(providerChoice || '1') - 1] ?? 'anthropic';
+  mergeConfig({ provider });
+
+  // ── 3. API key ──────────────────────────────────────────────────────────────
+  const keyMap: Record<Provider, keyof typeof config> = {
+    anthropic: 'anthropicKey',
+    openai:    'openaiKey',
+    gemini:    'geminiKey',
+  };
+  const existingKey = config[keyMap[provider]];
+  const keyHint     = existingKey ? `[${(existingKey as string).slice(0, 8)}…] ` : '';
+  const placeholders: Record<Provider, string> = {
+    anthropic: 'sk-ant-api03-…',
+    openai:    'sk-proj-…',
+    gemini:    'AIzaSy…',
+  };
+  const apiKey = await prompt(rl, chalk.green(`  ▶ ${provider} API key ${keyHint}(${placeholders[provider]}): `));
+  if (apiKey.trim()) {
+    if (provider === 'anthropic') mergeConfig({ anthropicKey: apiKey.trim() });
+    else if (provider === 'openai')  mergeConfig({ openaiKey:  apiKey.trim() });
+    else if (provider === 'gemini')  mergeConfig({ geminiKey:  apiKey.trim() });
+  }
+
+  // ── 4. Model selection ──────────────────────────────────────────────────────
+  console.log('');
+  console.log(chalk.white('  Model:'));
+  const models = MODEL_OPTIONS[provider];
+  models.forEach((m, i) => {
+    console.log(chalk.dim(`    ${i + 1}) ${m.label}`));
+  });
+  const defaultModel = DEFAULT_MODEL[provider];
+  const modelChoice  = await prompt(rl, chalk.green(`  ▶ Choice [1 = ${defaultModel}]: `));
+  const chosenModel  = models[Number(modelChoice || '1') - 1]?.value ?? defaultModel;
+  mergeConfig({ model: chosenModel });
 
   rl.close();
 
   console.log('');
   console.log(chalk.cyan('  Saved to ~/.istack/config.json'));
+  console.log(chalk.dim(`  Model: ${chosenModel}`));
   console.log(chalk.white.bold('  Run `istack` to open the REPL'));
   console.log('');
 }

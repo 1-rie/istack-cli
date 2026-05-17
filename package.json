@@ -1,6 +1,6 @@
 {
   "name": "istack-cli",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "iStack CLI — iOS AI Builder",
   "type": "module",
   "bin": {
@@ -9,11 +9,7 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "encrypt-skills": "bun run scripts/encrypt-skills.ts",
-    "build:mac-arm": "bun build --compile --target=bun-darwin-arm64  src/index.ts --outfile dist/istack-macos-arm64",
-    "build:mac-x64": "bun build --compile --target=bun-darwin-x64   src/index.ts --outfile dist/istack-macos-x64",
-    "build:linux-arm": "bun build --compile --target=bun-linux-arm64  src/index.ts --outfile dist/istack-linux-arm64",
-    "build:linux-x64": "bun build --compile --target=bun-linux-x64    src/index.ts --outfile dist/istack-linux-x64",
-    "build": "bun run encrypt-skills && bun run build:mac-arm && bun run build:mac-x64 && bun run build:linux-arm && bun run build:linux-x64",
+    "build": "bun run encrypt-skills && bun run scripts/build.ts",
     "checksum": "for f in dist/istack-*; do [ -f \"$f\" ] && shasum -a 256 \"$f\" > \"$f.sha256\"; done"
   },
   "dependencies": {

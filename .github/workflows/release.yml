@@ -52,12 +52,14 @@ jobs:
 
       - name: Build binary (${{ matrix.artifact }})
         env:
-          # Inject the binary half of the AES key as a compile-time define
           ISTACK_BK: ${{ secrets.ISTACK_BINARY_KEY_HALF }}
         run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           bun build --compile \
             --target=${{ matrix.target }} \
             --define '__ISTACK_BK__="'"$ISTACK_BK"'"' \
+            --define 'process.env.ISTACK_VERSION="'"$VERSION"'"' \
             src/index.ts \
             --outfile dist/${{ matrix.artifact }}
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { loadConfig } from '../auth/config.js';
-import { userInfo } from 'os';
+import { userInfo, homedir } from 'os';
 
 // ── Serif "1'" logo — Times New Roman style, 8 lines ─────────────────────────
 //
@@ -31,10 +31,17 @@ const ISTACK = [
   ' ██  ███████    ██    ██   ██  ██████ ██   ██',
 ];
 
+function shortCwd(): string {
+  const cwd  = process.cwd();
+  const home = homedir();
+  return cwd.startsWith(home) ? '~' + cwd.slice(home.length) : cwd;
+}
+
 export function Header() {
   const config = loadConfig();
   const email    = config.licenseEmail ?? userInfo().username;
   const plan     = config.plan as string | undefined;
+  const folder   = shortCwd();
 
   return (
     <Box
@@ -85,6 +92,7 @@ export function Header() {
           <Text dimColor>◉</Text>
           <Text color="white">{email}</Text>
           {plan && <Text dimColor> · {plan}</Text>}
+          <Text dimColor>  {folder}</Text>
         </Box>
 
         <Box flexDirection="row" gap={1}>

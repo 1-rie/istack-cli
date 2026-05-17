@@ -137,7 +137,7 @@ class OpenAIClient implements AIClient {
       })),
       messages: [
         ...systemMessages,
-        ...opts.messages.map(m => ({ role: m.role, content: m.content })),
+        ...opts.messages,
       ],
     });
 
@@ -174,7 +174,7 @@ class OpenAIClient implements AIClient {
   appendToolResults(messages: any[], rawContent: any, results: Array<{ toolUseId: string; content: string }>) {
     const assistantMsg = {
       role: 'assistant',
-      content: rawContent.text || null,
+      content: rawContent.text || '',
       tool_calls: rawContent.toolCalls.map((tc: ToolCall) => ({
         id: tc.id,
         type: 'function',

@@ -4,38 +4,20 @@ import { TextInput, Select } from '@inkjs/ui';
 import Spinner from 'ink-spinner';
 import { mergeConfig, type Provider } from '../auth/config.js';
 import { validateLicense } from '../auth/license.js';
+import { MODEL_OPTIONS, DEFAULT_MODEL } from '../models.js';
 
-type Step = 'provider' | 'api_key' | 'model' | 'license' | 'validating';
+type Step = 'license' | 'validating' | 'provider' | 'api_key' | 'model';
 
 type Props = {
   onDone: (message: string) => void;
 };
 
-// Exit is offered as the last option in the provider selector
 const PROVIDER_OPTIONS = [
-  { label: '🤖  Anthropic  (Claude Sonnet / Opus)', value: 'anthropic'  },
-  { label: '🟢  OpenAI     (GPT-4o)',                value: 'openai'     },
-  { label: '💎  Gemini     (Flash / Pro)',            value: 'gemini'     },
-  { label: '✕   Exit',                               value: '__exit__'   },
+  { label: '🤖  Anthropic  (Claude)',    value: 'anthropic' },
+  { label: '🟢  OpenAI     (GPT / o-series)', value: 'openai'    },
+  { label: '💎  Gemini     (Flash / Pro)', value: 'gemini'    },
+  { label: '✕   Exit',                   value: '__exit__'  },
 ];
-
-const MODEL_OPTIONS: Record<Provider, Array<{ label: string; value: string }>> = {
-  anthropic: [
-    { label: 'claude-sonnet-4-6       — fast + smart  ✦ recommended', value: 'claude-sonnet-4-6'        },
-    { label: 'claude-opus-4-7         — most capable',                 value: 'claude-opus-4-7'          },
-    { label: 'claude-haiku-4-5        — cheapest + fastest',           value: 'claude-haiku-4-5-20251001' },
-  ],
-  openai: [
-    { label: 'gpt-4o                  — fast + smart  ✦ recommended', value: 'gpt-4o'      },
-    { label: 'gpt-4o-mini             — cheapest',                    value: 'gpt-4o-mini' },
-    { label: 'o3                      — best reasoning',               value: 'o3'          },
-  ],
-  gemini: [
-    { label: 'gemini-2.0-flash-exp    — fast  ✦ recommended', value: 'gemini-2.0-flash-exp' },
-    { label: 'gemini-2.5-pro          — most capable',         value: 'gemini-2.5-pro'       },
-    { label: 'gemini-2.5-flash        — balanced',             value: 'gemini-2.5-flash'     },
-  ],
-};
 
 const API_KEY_PLACEHOLDER: Record<Provider, string> = {
   anthropic: 'sk-ant-api03-…',
@@ -43,24 +25,53 @@ const API_KEY_PLACEHOLDER: Record<Provider, string> = {
   gemini:    'AIzaSy…',
 };
 
-// Which steps support Esc → back, and where they go
+// Steps that support Esc → back, and where they go
 const BACK_MAP: Partial<Record<Step, Step>> = {
-  api_key: 'provider',
-  model:   'api_key',
-  license: 'model',
+  provider: 'license',
+  api_key:  'provider',
+  model:    'api_key',
 };
 
-export function LoginFlow({ onDone }: Props) {
-  const [step, setStep]           = useState<Step>('provider');
-  const [provider, setProvider]   = useState<Provider>('anthropic');
-  const [statusMsg, setStatusMsg] = useState('');
+const STEP_LABELS: Record<Exclude<Step, 'validating'>, string> = {
+  license:  'License',
+  provider: 'Provider',
+  api_key:  'API Key',
+  model:    'Model',
+};
+const ORDERED_STEPS: Exclude<Step, 'validating'>[] = ['license', 'provider', 'api_key', 'model'];
 
-  // Global Esc → back navigation (active on any step that has a parent)
+export function LoginFlow({ onDone }: Props) {
+  const [step, setStep]             = useState<Step>('license');
+  const [provider, setProvider]     = useState<Provider>('anthropic');
+  const [statusMsg, setStatusMsg]   = useState('');
+  const [licenseError, setLicenseError] = useState('');
+
   useInput((_, key) => {
     if (!key.escape) return;
     const prev = BACK_MAP[step];
     if (prev) setStep(prev);
   });
+
+  // ── Step handlers ──────────────────────────────────────────────────────────
+
+  const handleLicense = async (value: string) => {
+    const key = value.trim();
+    if (!key) {
+      setLicenseError('A valid iStack license is required. Get one at istack.dev');
+      return;
+    }
+    setLicenseError('');
+    setStep('validating');
+    setStatusMsg('Validating iStack license…');
+    const result = await validateLicense(key);
+    if (result.valid) {
+      setStatusMsg(`✓  ${result.email}  ·  ${result.plan}`);
+      setTimeout(() => setStep('provider'), 600);
+    } else {
+      setLicenseError(result.error ?? 'Invalid license key');
+      setStep('license');
+    }
+  };
 
   const handleProvider = (value: string) => {
     if (value === '__exit__') { onDone('Login cancelled.'); return; }
@@ -81,48 +92,27 @@ export function LoginFlow({ onDone }: Props) {
 
   const handleModel = (value: string) => {
     mergeConfig({ model: value });
-    setStep('license');
+    const config = { model: value };
+    onDone(`✓  All set! Using ${config.model}`);
   };
 
-  const handleLicense = async (value: string) => {
-    const key = value.trim();
-    if (!key) {
-      onDone('No license key — running in dev mode.\nSkills load from skills-source/ on this machine.');
-      return;
-    }
-    setStep('validating');
-    setStatusMsg('Validating license…');
-    const result = await validateLicense(key);
-    if (result.valid) {
-      onDone(`✓  Logged in — ${result.email}  ·  Plan: ${result.plan}  ·  Expires: ${result.validUntil}`);
-    } else {
-      onDone(`✗  Invalid license: ${result.error}\nType /login to try again.`);
-    }
-  };
-
-  // Hint shown on steps that allow going back
   const canGoBack = step in BACK_MAP;
+  const currentStepIdx = ORDERED_STEPS.indexOf(step as Exclude<Step, 'validating'>);
 
   return (
     <Box flexDirection="column" paddingX={1} marginBottom={1}>
 
-      {/* Header + back hint */}
+      {/* Header */}
       <Box marginBottom={1} justifyContent="space-between">
         <Text color="cyan" bold>◆  iStack Login</Text>
-        {canGoBack && (
-          <Text dimColor>  Esc to go back</Text>
-        )}
+        {canGoBack && <Text dimColor>  Esc to go back</Text>}
       </Box>
 
       {/* Step breadcrumb */}
       <Box marginBottom={1} gap={1}>
-        {(['provider', 'api_key', 'model', 'license'] as Step[]).map((s, i) => {
-          const steps: Step[] = ['provider', 'api_key', 'model', 'license'];
-          const currentIdx = steps.indexOf(step);
-          const thisIdx    = steps.indexOf(s);
-          const isDone     = thisIdx < currentIdx;
-          const isCurrent  = s === step;
-          const label      = ['Provider', 'API Key', 'Model', 'License'][i];
+        {ORDERED_STEPS.map((s, i) => {
+          const isDone    = i < currentStepIdx;
+          const isCurrent = s === step;
           return (
             <Text
               key={s}
@@ -130,12 +120,36 @@ export function LoginFlow({ onDone }: Props) {
               dimColor={!isCurrent && !isDone}
               bold={isCurrent}
             >
-              {isDone ? '✓' : isCurrent ? '▶' : '○'} {label}
-              {i < 3 ? <Text dimColor>  ·  </Text> : null}
+              {isDone ? '✓' : isCurrent ? '▶' : '○'} {STEP_LABELS[s]}
+              {i < ORDERED_STEPS.length - 1 ? <Text dimColor>  ·  </Text> : null}
             </Text>
           );
         })}
       </Box>
+
+      {/* ── Step: License ── */}
+      {step === 'license' && (
+        <Box flexDirection="column">
+          <Box>
+            <Text color="green">  ▶  iStack license key: </Text>
+            <TextInput
+              placeholder="ISTACK-XXXX-YYYY-ZZZZ"
+              onSubmit={handleLicense}
+            />
+          </Box>
+          {licenseError
+            ? <Text color="red">     ✖  {licenseError}</Text>
+            : <Text dimColor>     Enter your license key to continue  ·  istack.dev</Text>
+          }
+        </Box>
+      )}
+
+      {/* ── Step: Validating ── */}
+      {step === 'validating' && (
+        <Box paddingLeft={2}>
+          <Text color="cyan"><Spinner type="dots" />  {statusMsg}</Text>
+        </Box>
+      )}
 
       {/* ── Step: Provider ── */}
       {step === 'provider' && (
@@ -167,31 +181,14 @@ export function LoginFlow({ onDone }: Props) {
       {/* ── Step: Model ── */}
       {step === 'model' && (
         <Box flexDirection="column">
-          <Text dimColor>  ↑ ↓ to navigate  ·  Enter to confirm  ·  Esc to go back</Text>
+          <Text dimColor>  Provider: <Text color="white">{provider}</Text>   ·   ↑ ↓ to navigate  ·  Enter to confirm</Text>
           <Box marginTop={1} marginLeft={2}>
-            <Select options={MODEL_OPTIONS[provider]} onChange={handleModel} />
-          </Box>
-        </Box>
-      )}
-
-      {/* ── Step: License ── */}
-      {step === 'license' && (
-        <Box flexDirection="column">
-          <Box>
-            <Text color="green">  ▶  License key: </Text>
-            <TextInput
-              placeholder="ISTACK-XXXX-YYYY-ZZZZ  (Enter to skip)"
-              onSubmit={handleLicense}
+            <Select
+              options={MODEL_OPTIONS[provider]}
+              defaultValue={DEFAULT_MODEL[provider]}
+              onChange={handleModel}
             />
           </Box>
-          <Text dimColor>     Press Enter to skip and run in dev mode</Text>
-        </Box>
-      )}
-
-      {/* ── Step: Validating ── */}
-      {step === 'validating' && (
-        <Box paddingLeft={2}>
-          <Text color="cyan"><Spinner type="dots" />  {statusMsg}</Text>
         </Box>
       )}
 

@@ -3,6 +3,18 @@ import { TOOLS } from '../tools/registry.js';
 import { executeLocalTool } from '../tools/executor.js';
 import { createAIClient, type AIClient } from './providers.js';
 
+const DEFAULT_SYSTEM_PROMPT = `You are iStack, an expert iOS AI Builder assistant. Your sole purpose is to help users design, build, and ship iOS apps using Swift and SwiftUI.
+
+You specialize in:
+- Swift and SwiftUI development
+- iOS app architecture (MVVM, TCA, etc.)
+- Xcode project setup, build configuration, and CI/CD
+- App Store submission and review guidelines
+- Apple Human Interface Guidelines (HIG)
+- iStack skills: /review, /design-review, /plan-eng-review, /qa-ios, /ship-ios, and more
+
+Always respond with actionable, iOS-specific guidance. If the user asks something unrelated to iOS development, gently steer them back to building their app. Keep responses concise and developer-friendly.`;
+
 export type TurnOptions = {
   messages: Array<{ role: string; content: string }>;
   systemPrompt?: string;
@@ -24,16 +36,16 @@ export async function runAgentTurn(opts: TurnOptions): Promise<void> {
   for (let turn = 0; turn < 10; turn++) {
     const result = await client.streamTurn({
       messages: apiMessages,
-      system: opts.systemPrompt,
+      system: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       tools: TOOLS,
       onToken: opts.onToken,
     });
 
-    // Push assistant response
-    apiMessages.push({ role: 'assistant', content: result.rawContent as any });
-
-    // No tool calls → done
-    if (!result.toolCalls.length) break;
+    // No tool calls → push plain text and stop
+    if (!result.toolCalls.length) {
+      apiMessages.push({ role: 'assistant', content: result.text });
+      break;
+    }
 
     // Execute tool calls locally
     const toolResults: Array<{ toolUseId: string; content: string }> = [];
@@ -44,7 +56,7 @@ export async function runAgentTurn(opts: TurnOptions): Promise<void> {
       toolResults.push({ toolUseId: call.id, content: output });
     }
 
-    // Feed results back — format depends on provider
+    // appendToolResults adds the assistant message + tool results in the correct provider format
     apiMessages = client.appendToolResults(apiMessages, result.rawContent, toolResults);
   }
 }

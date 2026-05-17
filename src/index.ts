@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 import { program } from 'commander';
 
-// Version injected at build time — update when bumping package.json
-const pkg = { version: '1.0.0' };
+// Version injected at build time via --define 'process.env.ISTACK_VERSION="x.y.z"'
+const CURRENT_VERSION = (process.env.ISTACK_VERSION ?? '1.0.0').replace(/^v/, '');
 
 program
   .name('istack')
   .description('iStack CLI — iOS AI Builder')
-  .version(pkg.version, '-v, --version');
+  .version(CURRENT_VERSION, '-v, --version');
 
 program
   .command('login')

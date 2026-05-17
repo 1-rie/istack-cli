@@ -5,9 +5,9 @@ import { runAgentTurn } from '../agent/loop.js';
 
 export async function runSkill(skillName: string, opts: { path?: string }) {
   const config = await loadConfig();
-  const systemPrompt = await resolveSkill(skillName);
+  const skill = await resolveSkill(skillName);
 
-  if (!systemPrompt) {
+  if (!skill) {
     console.error(chalk.red(`Unknown skill: /${skillName}`));
     process.exit(1);
   }
@@ -18,7 +18,7 @@ export async function runSkill(skillName: string, opts: { path?: string }) {
 
   await runAgentTurn({
     messages: [{ role: 'user', content: userMessage }],
-    systemPrompt,
+    systemPrompt: skill.systemPrompt,
     config,
     onToken: (token) => process.stdout.write(token),
     onToolCall: (name) => process.stderr.write(chalk.dim(`\n[${name}]\n`)),
