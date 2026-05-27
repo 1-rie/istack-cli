@@ -98,13 +98,39 @@ else
   sudo mv "$TMP_FILE" "$BIN_DIR/istack"
 fi
 
+# ── iStack skills PATH setup ──────────────────────────────────────────────────
+SKILLS_DIR="$HOME/.claude/skills/istack"
+
+case "$(basename "${SHELL:-bash}")" in
+  zsh)  SHELL_PROFILE="$HOME/.zshrc" ;;
+  bash) [ "$(uname -s)" = "Darwin" ] && SHELL_PROFILE="$HOME/.bash_profile" || SHELL_PROFILE="$HOME/.bashrc" ;;
+  *)    SHELL_PROFILE="$HOME/.profile" ;;
+esac
+
+PATH_LINE='export PATH="$HOME/.claude/skills/istack/bin:$PATH"'
+
+if [ -d "$SKILLS_DIR" ]; then
+  if ! grep -q 'istack/bin' "$SHELL_PROFILE" 2>/dev/null; then
+    printf '\n# iStack skills bin (shared by CLI + Claude Code)\n%s\n' "$PATH_LINE" >> "$SHELL_PROFILE"
+    echo -e "${GREEN}  ✓ iStack skills detected — added bin to PATH in $(basename "$SHELL_PROFILE")${NC}"
+    echo -e "${DIM}    Run: source $SHELL_PROFILE${NC}"
+  else
+    echo -e "${GREEN}  ✓ iStack skills bin already in PATH${NC}"
+  fi
+else
+  echo -e "${DIM}  Tip: clone the skills for Claude Code standalone mode:${NC}"
+  echo -e "    ${CYAN}git clone https://github.com/1-rie/istack.git ~/.claude/skills/istack${NC}"
+  echo -e "  ${DIM}Then add to $SHELL_PROFILE:${NC}"
+  echo -e "    ${CYAN}$PATH_LINE${NC}"
+fi
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}  ✓ iStack CLI v$VERSION installed${NC}"
 echo ""
 echo -e "${DIM}  To get started:${NC}"
-echo -e "    ${CYAN}istack login${NC}   — configure your API key + license"
-echo -e "    ${CYAN}istack${NC}         — start the interactive REPL"
+echo -e "    ${CYAN}istack login${NC}      — configure your API key + license"
+echo -e "    ${CYAN}istack${NC}            — start the interactive REPL"
 echo -e "    ${CYAN}istack run review${NC} — run a skill non-interactively"
 echo ""
 echo -e "${DIM}  Docs: https://istack.dev/docs${NC}"
