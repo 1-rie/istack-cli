@@ -102,12 +102,12 @@ export async function resolveSkill(name: string): Promise<SkillResult | undefine
 
 function listDevSkills(): string[] {
   try {
-    const { readdirSync } = require('fs');
+    const { readdirSync, existsSync } = require('fs');
     const { join } = require('path');
     const dir = join(import.meta.dir, '../../skills-source');
-    return readdirSync(dir)
-      .filter((f: string) => f.endsWith('.md'))
-      .map((f: string) => f.replace('.md', ''));
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((e: any) => e.isDirectory() && existsSync(join(dir, e.name, 'SKILL.md')))
+      .map((e: any) => e.name);
   } catch {
     return [];
   }
@@ -117,7 +117,7 @@ async function resolveDevSkill(name: string): Promise<SkillResult | undefined> {
   try {
     const { readFileSync } = await import('fs');
     const { join } = await import('path');
-    const path = join(import.meta.dir, '../../skills-source', `${name}.md`);
+    const path = join(import.meta.dir, '../../skills-source', name, 'SKILL.md');
     const content = readFileSync(path, 'utf8');
     return parseFrontMatter(content);
   } catch {

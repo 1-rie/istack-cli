@@ -27,15 +27,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout skills (private repo)
+      - name: Checkout skills
         uses: actions/checkout@v4
         with:
-          repository: 1-rie/istack-skills
-          token: ${{ secrets.SKILLS_REPO_TOKEN }}
-          path: skills-source-repo
-
-      - name: Move skills into place
-        run: mv skills-source-repo/skills-source ./skills-source
+          repository: 1-rie/istack
+          path: skills-source
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

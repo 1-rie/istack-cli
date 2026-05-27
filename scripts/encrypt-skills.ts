@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Build-time script — run ONLY on your dev/CI machine.
- * Reads skills-source/*.md, encrypts each with AES-256-CBC,
+ * Reads skills-source/<skill>/SKILL.md, encrypts each with AES-256-CBC,
  * and writes src/skills/encrypted.ts (compiled into the binary).
  *
  * Required env var:
@@ -13,7 +13,7 @@
  */
 import { readdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { createCipheriv, randomBytes } from 'crypto';
-import { join, basename } from 'path';
+import { join } from 'path';
 
 const ROOT = join(import.meta.dir, '..');
 const SKILLS_DIR = join(ROOT, 'skills-source');
@@ -40,10 +40,12 @@ const LICENSE_HALF = KEY.subarray(16).toString('hex');    // served by license s
 const encrypted: Record<string, string> = {};
 let count = 0;
 
-for (const file of readdirSync(SKILLS_DIR)) {
-  if (!file.endsWith('.md')) continue;
-  const name = basename(file, '.md');
-  const content = readFileSync(join(SKILLS_DIR, file), 'utf8');
+for (const entry of readdirSync(SKILLS_DIR, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  const skillFile = join(SKILLS_DIR, entry.name, 'SKILL.md');
+  if (!existsSync(skillFile)) continue;
+  const name = entry.name;
+  const content = readFileSync(skillFile, 'utf8');
 
   const iv = randomBytes(16);
   const cipher = createCipheriv('aes-256-cbc', KEY, iv);
