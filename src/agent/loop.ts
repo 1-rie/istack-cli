@@ -22,6 +22,7 @@ export type TurnOptions = {
   onToken: (token: string) => void;
   onToolCall: (name: string, input: unknown) => void;
   onToolResult: (name: string, result: string) => void;
+  onUsage?: (usage: { inputTokens: number; outputTokens: number }) => void;
 };
 
 export async function runAgentTurn(opts: TurnOptions): Promise<void> {
@@ -34,12 +35,18 @@ export async function runAgentTurn(opts: TurnOptions): Promise<void> {
 
   // Agentic loop — max 10 tool-call rounds
   for (let turn = 0; turn < 10; turn++) {
+    // Force tool use on the first turn of a skill execution so the model
+    // can't silently return empty text instead of starting the workflow.
+    const toolChoice = (turn === 0 && opts.systemPrompt) ? 'required' as const : 'auto' as const;
     const result = await client.streamTurn({
       messages: apiMessages,
       system: opts.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
       tools: TOOLS,
+      toolChoice,
       onToken: opts.onToken,
     });
+
+    if (result.usage) opts.onUsage?.(result.usage);
 
     // No tool calls → push plain text and stop
     if (!result.toolCalls.length) {

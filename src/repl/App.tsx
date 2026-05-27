@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Box, Text, useApp, useStdout, useInput } from 'ink';
 import { TextInput, Select } from '@inkjs/ui';
 import Spinner from 'ink-spinner';
@@ -30,7 +30,7 @@ Be concise and action-oriented. Never explain Xcode setup or Apple basics — as
 import { loadConfig, saveConfig, mergeConfig } from '../auth/config.js';
 import { validateLicense } from '../auth/license.js';
 import { checkForUpdate, UpdateResult } from '../updater.js';
-import { ALL_MODEL_OPTIONS } from '../models.js';
+import { ALL_MODEL_OPTIONS, MODEL_CTX } from '../models.js';
 import { detectProject } from '../project.js';
 import { LoginFlow } from './LoginFlow.js';
 import { SkillWizard, type WizardAnswers } from './SkillWizard.js';
@@ -49,10 +49,11 @@ function isLoggedIn(): boolean {
   return !!(config.anthropicKey || config.openaiKey || config.geminiKey);
 }
 
-// Approximate header height in terminal rows
-const HEADER_ROWS  = 13;
+// Header height: border(2) + paddingY(2) + logo/title(8) + footer row(2) + marginBottom(1) = 15
+const HEADER_ROWS  = 15;
 const INPUT_ROWS   = 3;
-const MESSAGE_ROWS = 4; // rough rows per message
+const MESSAGE_ROWS = 4;
+const CHROME_ROWS  = 5; // budget for banners, loading label, spacing
 
 export function App() {
   const { exit } = useApp();
@@ -69,8 +70,12 @@ export function App() {
   const [updateInfo, setUpdateInfo]         = useState<UpdateResult | null>(null);
   const [licenseRevoked, setLicenseRevoked] = useState(false);
   const [isPickingModel, setIsPickingModel] = useState(false);
+  const [inputKey, setInputKey] = useState(0);
   const [isNoProjectPrompt, setIsNoProjectPrompt] = useState(false);
   const [isFolderInput, setIsFolderInput]         = useState(false);
+  const [cmdMenuIndex, setCmdMenuIndex] = useState(0);
+  const [lastUsage, setLastUsage]       = useState<{ inputTokens: number; outputTokens: number } | null>(null);
+  const [sessionOutTokens, setSessionOutTokens] = useState(0);
   const [wizardState, setWizardState] = useState<{
     title: string;
     questions: WizardQuestion[];
@@ -114,7 +119,25 @@ export function App() {
     }
   }, [screen]);
 
-  // Double Ctrl+C to quit
+  // All commands available in the menu
+  const allCommands = useMemo(() => [
+    'help', 'login', 'logout', 'clear', 'config models', 'exit',
+    ...listSkills(),
+  ], []);
+
+  // Command menu: active when input starts with '/'
+  const slashQuery   = input.startsWith('/') ? input.slice(1) : null;
+  const filteredCmds = slashQuery !== null
+    ? allCommands.filter(c => c.startsWith(slashQuery))
+    : [];
+  const safeMenuIndex = Math.min(cmdMenuIndex, Math.max(0, filteredCmds.length - 1));
+  const showCmdMenu   = filteredCmds.length > 0
+    && !isLoading && !isLoggingIn && !isPickingModel
+    && !isNoProjectPrompt && !isFolderInput && !wizardState;
+
+  // Reset selection when user types
+  useEffect(() => { setCmdMenuIndex(0); }, [input]);
+
   useInput((ch, key) => {
     if (key.ctrl && ch === 'c') {
       if (ctrlCPending) {
@@ -125,13 +148,41 @@ export function App() {
         ctrlCTimer.current = setTimeout(() => setCtrlCPending(false), 2000);
       }
     }
+
+    if (!showCmdMenu) return;
+
+    if (key.tab) {
+      const selected = filteredCmds[safeMenuIndex];
+      if (selected) {
+        setInput('/' + selected);
+        setInputKey(k => k + 1);
+      }
+    }
+
+    if (key.upArrow) {
+      setCmdMenuIndex(i => Math.max(0, i - 1));
+    }
+
+    if (key.downArrow) {
+      setCmdMenuIndex(i => Math.min(filteredCmds.length - 1, i + 1));
+    }
+
+    if (key.escape) {
+      setInput('');
+      setInputKey(k => k + 1);
+    }
   });
 
-  // How many messages fit below the header
-  const termRows    = stdout?.rows ?? 40;
-  const maxVisible  = Math.max(2, Math.floor((termRows - HEADER_ROWS - INPUT_ROWS) / MESSAGE_ROWS));
-  const visibleMsgs = messages.slice(-maxVisible);
-  const hiddenCount = messages.length - visibleMsgs.length;
+  // How many messages fit below the header — subtract chrome budget so total never exceeds termRows
+  const termRows       = stdout?.rows ?? 40;
+  const maxVisible     = Math.max(1, Math.floor((termRows - HEADER_ROWS - INPUT_ROWS - CHROME_ROWS) / MESSAGE_ROWS));
+  const visibleMsgs    = messages.slice(-maxVisible);
+  const hiddenCount    = messages.length - visibleMsgs.length;
+  // Clamp streaming output so a long response can't push the header off screen
+  const maxStreamLines = Math.max(1, termRows - HEADER_ROWS - CHROME_ROWS - 3);
+  const displayBuffer  = streamBuffer
+    ? streamBuffer.split('\n').slice(-maxStreamLines).join('\n')
+    : '';
 
   const handleSplashDone = useCallback(() => {
     setScreen(isLoggedIn() ? 'repl' : 'login');
@@ -206,6 +257,7 @@ export function App() {
         onToken:      t  => { fullResponse += t; setStreamBuffer(fullResponse); },
         onToolCall:   n  => setToolStatus(`Running: ${n}`),
         onToolResult: () => setToolStatus(''),
+        onUsage:      u  => { setLastUsage(u); setSessionOutTokens(n => n + u.outputTokens); },
       });
       setMessages(m => [...m, { role: 'assistant', content: fullResponse }]);
     } catch (err: unknown) {
@@ -220,21 +272,26 @@ export function App() {
     }
   }, [wizardState, messages]);
 
+  const clearInput = useCallback(() => {
+    setInput('');
+    setInputKey(k => k + 1);
+  }, []);
+
   const handleSubmit = useCallback(async (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
 
     // ── Built-in commands ──────────────────────────────────────────────────
-    if (trimmed === '/exit' || trimmed === '/quit') { exit(); return; }
+    if (trimmed === '/exit' || trimmed === '/quit') { clearInput(); exit(); return; }
 
     if (trimmed === '/login') {
-      setInput('');
+      clearInput();
       setIsLoggingIn(true);
       return;
     }
 
     if (trimmed === '/logout') {
-      setInput('');
+      clearInput();
       const config = loadConfig();
       saveConfig({ provider: config.provider, model: config.model });
       setMessages(m => [...m, {
@@ -246,12 +303,12 @@ export function App() {
 
     if (trimmed === '/clear') {
       setMessages([]);
-      setInput('');
+      clearInput();
       return;
     }
 
     if (trimmed === '/config models' || trimmed === '/config model') {
-      setInput('');
+      clearInput();
       setIsPickingModel(true);
       return;
     }
@@ -275,12 +332,12 @@ export function App() {
           '  /exit           — Quit iStack CLI',
         ].join('\n'),
       }]);
-      setInput('');
+      clearInput();
       return;
     }
 
     // ── Agent turn ────────────────────────────────────────────────────────
-    setInput('');
+    clearInput();
     setIsLoading(true);
     setStreamBuffer('');
     setToolStatus('');
@@ -320,6 +377,7 @@ export function App() {
         onToken:      t  => { fullResponse += t; setStreamBuffer(fullResponse); },
         onToolCall:   n  => setToolStatus(`Running: ${n}`),
         onToolResult: () => setToolStatus(''),
+        onUsage:      u  => { setLastUsage(u); setSessionOutTokens(n => n + u.outputTokens); },
       });
 
       setMessages(m => [...m, { role: 'assistant', content: fullResponse }]);
@@ -333,7 +391,7 @@ export function App() {
       setStreamBuffer('');
       setToolStatus('');
     }
-  }, [messages, exit]);
+  }, [messages, exit, clearInput]);
 
   // ── Splash ───────────────────────────────────────────────────────────────
   if (screen === 'splash') return <Splash onDone={handleSplashDone} />;
@@ -451,8 +509,8 @@ export function App() {
         <Box flexDirection="column" marginBottom={1}>
           <Text color="cyan" bold>◆  iStack</Text>
           <Box paddingLeft={3}>
-            {streamBuffer
-              ? <Text>{streamBuffer}</Text>
+            {displayBuffer
+              ? <Text>{displayBuffer}</Text>
               : toolStatus
                 ? <Text color="yellow"><Spinner type="dots" />  {toolStatus}</Text>
                 : <Text color="cyan"><Spinner type="dots" />  Thinking…</Text>
@@ -467,16 +525,20 @@ export function App() {
       {/* Input + current model hint */}
       {!isLoading && !isLoggingIn && !isPickingModel && !isNoProjectPrompt && !isFolderInput && !wizardState && (
         <Box flexDirection="column" marginTop={1}>
+          {showCmdMenu && (
+            <CommandMenu commands={filteredCmds} selectedIndex={safeMenuIndex} />
+          )}
           <Box>
             <Text color="green" bold>▶  </Text>
             <TextInput
-              value={input}
+              key={inputKey}
+              defaultValue={input}
               onChange={setInput}
               onSubmit={handleSubmit}
               placeholder="Type a skill like /review, /plan-eng-review, or ask anything…"
             />
           </Box>
-          <ModelStatusLine />
+          <ModelStatusLine lastUsage={lastUsage} sessionOutTokens={sessionOutTokens} />
         </Box>
       )}
 
@@ -484,12 +546,38 @@ export function App() {
   );
 }
 
-function ModelStatusLine() {
-  const config = loadConfig();
-  const model  = config.model ?? '—';
+function fmtTok(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function ModelStatusLine({
+  lastUsage,
+  sessionOutTokens,
+}: {
+  lastUsage: { inputTokens: number; outputTokens: number } | null;
+  sessionOutTokens: number;
+}) {
+  const config  = loadConfig();
+  const model   = config.model ?? '—';
+  const ctxMax  = MODEL_CTX[model];
+  const cwd     = process.cwd().replace(homedir(), '~');
+
+  const sep = <Text dimColor>  ·  </Text>;
+
   return (
-    <Box paddingLeft={3} marginTop={0}>
+    <Box paddingLeft={3} marginTop={0} flexDirection="row" flexWrap="nowrap">
       <Text dimColor>{model}</Text>
+      {lastUsage && ctxMax && (<>
+        {sep}
+        <Text dimColor>ctx </Text>
+        <Text dimColor>{fmtTok(lastUsage.inputTokens)}/{fmtTok(ctxMax)}</Text>
+      </>)}
+      {sessionOutTokens > 0 && (<>
+        {sep}
+        <Text dimColor>{fmtTok(sessionOutTokens)} tok</Text>
+      </>)}
+      {sep}
+      <Text dimColor>{cwd}</Text>
     </Box>
   );
 }
@@ -555,6 +643,31 @@ function FolderInput({ onSubmit, onCancel }: {
             onSubmit={(v) => { if (v.trim()) onSubmit(v); }}
           />
         </Box>
+      </Box>
+    </Box>
+  );
+}
+
+function CommandMenu({ commands, selectedIndex }: { commands: string[]; selectedIndex: number }) {
+  const MAX = 6;
+  const visible = commands.slice(0, MAX);
+  return (
+    <Box flexDirection="column" paddingLeft={3} marginBottom={0}>
+      {visible.map((cmd, i) => (
+        <Box key={cmd}>
+          <Text color={i === selectedIndex ? 'cyan' : undefined} bold={i === selectedIndex}>
+            {i === selectedIndex ? '› ' : '  '}
+          </Text>
+          <Text color={i === selectedIndex ? 'cyan' : 'white'} bold={i === selectedIndex}>
+            {'/' + cmd}
+          </Text>
+        </Box>
+      ))}
+      {commands.length > MAX && (
+        <Box paddingLeft={2}><Text dimColor>+{commands.length - MAX} more…</Text></Box>
+      )}
+      <Box paddingLeft={2} marginTop={0}>
+        <Text dimColor>↑↓ navigate  ·  Tab complete  ·  Esc dismiss</Text>
       </Box>
     </Box>
   );

@@ -13,7 +13,8 @@ export const MODEL_OPTIONS: Record<Provider, ModelOption[]> = {
     { label: 'claude-3-opus             — powerful (legacy)',                 value: 'claude-3-opus-20240229'     },
   ],
   openai: [
-    { label: 'gpt-4o                    — fast + smart       ✦ recommended', value: 'gpt-4o'          },
+    { label: 'gpt-5.5                   — latest flagship    ✦ recommended', value: 'gpt-5.5'         },
+    { label: 'gpt-4o                    — fast + smart',                      value: 'gpt-4o'          },
     { label: 'gpt-4o-mini               — cheapest / fastest',               value: 'gpt-4o-mini'     },
     { label: 'o3                        — most powerful reasoning',           value: 'o3'              },
     { label: 'o3-mini                   — affordable reasoning',              value: 'o3-mini'         },
@@ -32,6 +33,28 @@ export const DEFAULT_MODEL: Record<Provider, string> = {
   anthropic: 'claude-sonnet-4-6',
   openai:    'gpt-4o',
   gemini:    'gemini-2.0-flash-exp',
+};
+
+/** Context window size (tokens) per model ID */
+export const MODEL_CTX: Record<string, number> = {
+  'claude-sonnet-4-6':          200_000,
+  'claude-opus-4-7':            200_000,
+  'claude-haiku-4-5-20251001':  200_000,
+  'claude-3-7-sonnet-20250219': 200_000,
+  'claude-3-5-sonnet-20241022': 200_000,
+  'claude-3-5-haiku-20241022':  200_000,
+  'claude-3-opus-20240229':     200_000,
+  'gpt-5.5':     128_000,
+  'gpt-4o':      128_000,
+  'gpt-4o-mini': 128_000,
+  'o3':          200_000,
+  'o3-mini':     128_000,
+  'o1':          128_000,
+  'o1-mini':     128_000,
+  'gpt-4-turbo': 128_000,
+  'gemini-2.0-flash-exp': 1_048_576,
+  'gemini-2.5-pro':       1_048_576,
+  'gemini-2.5-flash':     1_048_576,
 };
 
 /** All options flattened, for use in /config models (provider-agnostic picker) */

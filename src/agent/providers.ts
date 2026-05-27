@@ -11,6 +11,7 @@ export type TurnResult = {
   text: string;
   toolCalls: ToolCall[];
   rawContent: unknown; // provider-specific, passed back for tool results
+  usage?: { inputTokens: number; outputTokens: number };
 };
 
 export type StreamTurnOptions = {
@@ -18,6 +19,8 @@ export type StreamTurnOptions = {
   system?: string;
   tools: ToolDefinition[];
   onToken: (token: string) => void;
+  /** Force the model to use a tool on this turn. Default: auto. */
+  toolChoice?: 'auto' | 'required';
 };
 
 export interface AIClient {
@@ -58,6 +61,7 @@ class AnthropicClient implements AIClient {
       model: this.model,
       max_tokens: 8192,
       system: opts.system,
+      tool_choice: opts.toolChoice === 'required' ? { type: 'any' as const } : { type: 'auto' as const },
       tools: opts.tools.map(t => ({
         name: t.name,
         description: t.description,
@@ -85,7 +89,11 @@ class AnthropicClient implements AIClient {
         return { id: b.id, name: b.name, input: b.input };
       });
 
-    return { text, toolCalls, rawContent: final.content };
+    const usage = final.usage
+      ? { inputTokens: final.usage.input_tokens, outputTokens: final.usage.output_tokens }
+      : undefined;
+
+    return { text, toolCalls, rawContent: final.content, usage };
   }
 
   appendToolResults(messages: any[], rawContent: unknown, results: Array<{ toolUseId: string; content: string }>) {
@@ -124,9 +132,23 @@ class OpenAIClient implements AIClient {
       ? [{ role: 'system' as const, content: opts.system }]
       : [];
 
+    // OpenAI requires strictly alternating user/assistant turns.
+    // Consecutive same-role messages (e.g. skill command + wizard answers) confuse
+    // the model and produce silent empty responses — merge them into one message.
+    const merged = opts.messages.reduce((acc, msg) => {
+      const last = acc[acc.length - 1];
+      if (last && last.role === msg.role && typeof last.content === 'string' && typeof msg.content === 'string') {
+        last.content = last.content + '\n\n' + msg.content;
+        return acc;
+      }
+      return [...acc, { ...msg }];
+    }, [] as typeof opts.messages);
+
     const stream = await client.chat.completions.create({
       model: this.model,
       stream: true,
+      stream_options: { include_usage: true },
+      tool_choice: opts.toolChoice === 'required' ? 'required' : 'auto',
       tools: opts.tools.map(t => ({
         type: 'function' as const,
         function: {
@@ -137,14 +159,16 @@ class OpenAIClient implements AIClient {
       })),
       messages: [
         ...systemMessages,
-        ...opts.messages,
+        ...merged,
       ],
     });
 
     let text = '';
     const toolCallsMap = new Map<number, { id: string; name: string; args: string }>();
+    let openaiUsage: { prompt_tokens: number; completion_tokens: number } | undefined;
 
     for await (const chunk of stream) {
+      if (chunk.usage) openaiUsage = chunk.usage as any;
       const delta = chunk.choices[0]?.delta;
       if (delta?.content) {
         text += delta.content;
@@ -168,7 +192,11 @@ class OpenAIClient implements AIClient {
       input: JSON.parse(tc.args || '{}'),
     }));
 
-    return { text, toolCalls, rawContent: { text, toolCalls } };
+    const usage = openaiUsage
+      ? { inputTokens: openaiUsage.prompt_tokens, outputTokens: openaiUsage.completion_tokens }
+      : undefined;
+
+    return { text, toolCalls, rawContent: { text, toolCalls }, usage };
   }
 
   appendToolResults(messages: any[], rawContent: any, results: Array<{ toolUseId: string; content: string }>) {
@@ -241,7 +269,12 @@ class GeminiClient implements AIClient {
       input: fc.args,
     }));
 
-    return { text, toolCalls, rawContent: { text, toolCalls, finalResponse: final } };
+    const meta = final.usageMetadata;
+    const usage = meta
+      ? { inputTokens: meta.promptTokenCount ?? 0, outputTokens: meta.candidatesTokenCount ?? 0 }
+      : undefined;
+
+    return { text, toolCalls, rawContent: { text, toolCalls, finalResponse: final }, usage };
   }
 
   appendToolResults(messages: any[], rawContent: any, results: Array<{ toolUseId: string; content: string }>) {
